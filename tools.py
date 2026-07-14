@@ -1,5 +1,4 @@
 import os
-import sys
 
 import psycopg
 from dotenv import load_dotenv
@@ -89,11 +88,6 @@ def three_way_match(invoice_id: str) -> dict:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        ids = [sys.argv[1]]
-    else:
-        ids = ["INV-1040", "INV-1051", "INV-1052", "INV-1053",
-               "INV-1054", "INV-1055", "INV-1056", "INV-1057"]
-
-    for inv in ids:
+    for inv in ["INV-1040", "INV-1051", "INV-1052", "INV-1053",
+                "INV-1054", "INV-1055", "INV-1056", "INV-1057"]:
         print(three_way_match(inv))

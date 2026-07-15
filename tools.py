@@ -196,6 +196,52 @@ def search_vendor_history(vendor_id: str, total: float, exclude_invoice_id: str)
             ],
         }
 
+
+def fetch_invoice(invoice_id: str) -> dict:
+    with _connect() as conn:
+        row = conn.execute(
+            """select id, invoice_number, vendor_id, po_id, invoice_date,
+                      subtotal, tax_rate, tax_amount, total, gl_code, status, paid_date
+               from invoices where id = %s""",
+            (invoice_id,),
+        ).fetchone()
+
+        if row is None:
+            return {"invoice_id": invoice_id, "found": False}
+
+        lines = conn.execute(
+            """select line_no, po_line_no, description, quantity, unit_price, amount
+               from invoice_lines where invoice_id = %s order by line_no""",
+            (invoice_id,),
+        ).fetchall()
+
+        return {
+            "invoice_id": row[0],
+            "found": True,
+            "invoice_number": row[1],
+            "vendor_id": row[2],
+            "po_id": row[3],
+            "invoice_date": str(row[4]),
+            "subtotal": float(row[5]),
+            "tax_rate": float(row[6]),
+            "tax_amount": float(row[7]),
+            "total": float(row[8]),
+            "gl_code": row[9],
+            "status": row[10],
+            "paid_date": str(row[11]) if row[11] else None,
+            "lines": [
+                {
+                    "line_no": l[0],
+                    "po_line_no": l[1],
+                    "description": l[2],
+                    "quantity": float(l[3]),
+                    "unit_price": float(l[4]),
+                    "amount": float(l[5]),
+                }
+                for l in lines
+            ],
+        }
+
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         print(three_way_match(sys.argv[1]))

@@ -72,8 +72,12 @@ root_cause.
 - Prefer the cheapest probe that can settle your current hypothesis.
 - A price variance is not automatically an error: check whether a contract tolerance covers it \
 before concluding.
-- An invoice that looks perfectly clean still deserves one duplicate check if its amount is \
-large.
+- A clean three-way match proves only that the invoice agrees with the PO and receipts on \
+quantities and prices. It says nothing about tax rates, fees, or other charges. Agreed tax \
+rates and charge terms live in the vendor's contract. Never clear an invoice that charges tax \
+or fees without verifying those charges against the contract.
+- Before clearing any invoice with a total above $1,000, run one duplicate check. Below that, \
+skip it unless something else raises suspicion.
 - If after several probes your confidence in any explanation stays below 0.7, stop and choose \
 escalate_low_confidence. Uncertainty is a valid finding. A wrong confident answer is the worst \
 outcome you can produce.

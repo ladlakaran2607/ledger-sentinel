@@ -11,14 +11,7 @@ load_dotenv()
 
 
 def initial_state(invoice_id: str) -> dict:
-    return {
-        "invoice_id": invoice_id,
-        "vendor": "Acme HVAC",
-        "amount": 48200.0,
-        "proposed_action": "",
-        "decision": "",
-        "status": "new",
-    }
+    return {"invoice_id": invoice_id, "decision": "", "status": "new"}
 
 
 def main() -> None:

@@ -1,4 +1,5 @@
 import os
+import sys
 
 import psycopg
 from dotenv import load_dotenv
@@ -86,8 +87,124 @@ def three_way_match(invoice_id: str) -> dict:
         verdict = "mismatch" if discrepancies else "clean"
         return {"invoice_id": invoice_id, "verdict": verdict, "discrepancies": discrepancies}
 
+def fetch_po(po_id: str) -> dict:
+    with _connect() as conn:
+        header = conn.execute(
+            """select id, vendor_id, order_date, status
+               from purchase_orders where id = %s""",
+            (po_id,),
+        ).fetchone()
+
+        if header is None:
+            return {"po_id": po_id, "found": False}
+
+        lines = conn.execute(
+            """select line_no, description, quantity, unit_price, gl_code, match_type
+               from po_lines where po_id = %s order by line_no""",
+            (po_id,),
+        ).fetchall()
+
+        return {
+            "po_id": header[0],
+            "found": True,
+            "vendor_id": header[1],
+            "order_date": str(header[2]),
+            "status": header[3],
+            "lines": [
+                {
+                    "line_no": l[0],
+                    "description": l[1],
+                    "quantity": float(l[2]),
+                    "unit_price": float(l[3]),
+                    "gl_code": l[4],
+                    "match_type": l[5],
+                }
+                for l in lines
+            ],
+        }
+
+
+def fetch_goods_receipts(po_id: str) -> dict:
+    with _connect() as conn:
+        rows = conn.execute(
+            """select gr.id, gr.received_date, rl.po_line_no, rl.qty_received
+               from goods_receipts gr
+               join receipt_lines rl on rl.receipt_id = gr.id
+               where gr.po_id = %s
+               order by gr.received_date, gr.id, rl.po_line_no""",
+            (po_id,),
+        ).fetchall()
+
+        receipts = {}
+        for receipt_id, received_date, po_line_no, qty in rows:
+            receipts.setdefault(
+                receipt_id, {"receipt_id": receipt_id, "received_date": str(received_date), "lines": []}
+            )["lines"].append({"po_line_no": po_line_no, "qty_received": float(qty)})
+
+        return {"po_id": po_id, "receipts": list(receipts.values())}
+
+
+def read_contract_clauses(vendor_id: str) -> dict:
+    with _connect() as conn:
+        rows = conn.execute(
+            """select c.id, c.valid_from, c.valid_to, cc.clause_ref, cc.clause_text
+               from contracts c
+               join contract_clauses cc on cc.contract_id = c.id
+               where c.vendor_id = %s
+               order by c.id, cc.clause_ref""",
+            (vendor_id,),
+        ).fetchall()
+
+        contracts = {}
+        for contract_id, valid_from, valid_to, clause_ref, clause_text in rows:
+            contracts.setdefault(
+                contract_id,
+                {
+                    "contract_id": contract_id,
+                    "valid_from": str(valid_from),
+                    "valid_to": str(valid_to),
+                    "clauses": [],
+                },
+            )["clauses"].append({"ref": clause_ref, "text": clause_text})
+
+        return {"vendor_id": vendor_id, "contracts": list(contracts.values())}
+
+
+def search_vendor_history(vendor_id: str, total: float, exclude_invoice_id: str) -> dict:
+    with _connect() as conn:
+        rows = conn.execute(
+            """select id, invoice_number, invoice_date, total, status, paid_date
+               from invoices
+               where vendor_id = %s and total = %s and id <> %s
+               order by invoice_date""",
+            (vendor_id, total, exclude_invoice_id),
+        ).fetchall()
+
+        return {
+            "vendor_id": vendor_id,
+            "total_searched": float(total),
+            "matches": [
+                {
+                    "invoice_id": r[0],
+                    "invoice_number": r[1],
+                    "invoice_date": str(r[2]),
+                    "total": float(r[3]),
+                    "status": r[4],
+                    "paid_date": str(r[5]) if r[5] else None,
+                }
+                for r in rows
+            ],
+        }
 
 if __name__ == "__main__":
-    for inv in ["INV-1040", "INV-1051", "INV-1052", "INV-1053",
-                "INV-1054", "INV-1055", "INV-1056", "INV-1057"]:
-        print(three_way_match(inv))
+    if len(sys.argv) > 1:
+        print(three_way_match(sys.argv[1]))
+    else:
+        for inv in ["INV-1040", "INV-1051", "INV-1052", "INV-1053",
+                    "INV-1054", "INV-1055", "INV-1056", "INV-1057"]:
+            print(three_way_match(inv))
+        print()
+        print(fetch_po("PO-121"))
+        print(fetch_goods_receipts("PO-121"))
+        print(read_contract_clauses("VEND-002"))
+        print(search_vendor_history("VEND-003", 48200.00, "INV-1053"))

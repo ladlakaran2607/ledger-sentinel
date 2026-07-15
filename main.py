@@ -1,99 +1,59 @@
 import os
 import sys
 
-import psycopg
 from dotenv import load_dotenv
+from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.types import Command
+
+from graph import builder
 
 load_dotenv()
 
 
-def _connect():
-    return psycopg.connect(os.environ["DATABASE_URL"], connect_timeout=20)
+def initial_state(invoice_id: str) -> dict:
+    return {
+        "invoice_id": invoice_id,
+        "vendor": "Acme HVAC",
+        "amount": 48200.0,
+        "proposed_action": "",
+        "decision": "",
+        "status": "new",
+    }
 
 
-def three_way_match(invoice_id: str) -> dict:
-    with _connect() as conn:
-        invoice = conn.execute(
-            """select po_id, subtotal, tax_rate, tax_amount, total
-               from invoices where id = %s""",
-            (invoice_id,),
-        ).fetchone()
+def main() -> None:
+    if len(sys.argv) < 3:
+        print("usage: python main.py start|status|resume <invoice_id> [approved|rejected]")
+        sys.exit(1)
 
-        if invoice is None:
-            return {"invoice_id": invoice_id, "verdict": "not_found", "discrepancies": []}
+    command = sys.argv[1]
+    invoice_id = sys.argv[2]
+    config = {"configurable": {"thread_id": invoice_id}}
+    url = os.environ["DATABASE_URL"]
 
-        po_id, subtotal, tax_rate, tax_amount, total = invoice
+    with PostgresSaver.from_conn_string(url) as checkpointer:
+        graph = builder.compile(checkpointer=checkpointer)
 
-        if po_id is None:
-            return {"invoice_id": invoice_id, "verdict": "no_po", "discrepancies": []}
+        if command == "start":
+            result = graph.invoke(initial_state(invoice_id), config)
+            for intr in result.get("__interrupt__", []):
+                print("PAUSED FOR APPROVAL:")
+                print(intr.value)
 
-        discrepancies = []
+        elif command == "status":
+            snapshot = graph.get_state(config)
+            print("next node:", snapshot.next)
+            print("state:", snapshot.values)
 
-        lines = conn.execute(
-            """select il.line_no, il.po_line_no, il.quantity, il.unit_price, il.amount,
-                      pl.unit_price, pl.match_type
-               from invoice_lines il
-               join po_lines pl on pl.po_id = %s and pl.line_no = il.po_line_no
-               where il.invoice_id = %s
-               order by il.line_no""",
-            (po_id, invoice_id),
-        ).fetchall()
+        elif command == "resume":
+            decision = sys.argv[3] if len(sys.argv) > 3 else "approved"
+            result = graph.invoke(Command(resume=decision), config)
+            print("final state:", result)
 
-        line_amount_sum = 0
-        for line_no, po_line_no, billed_qty, billed_price, amount, agreed_price, match_type in lines:
-            line_amount_sum += amount
-
-            if billed_price != agreed_price:
-                discrepancies.append({
-                    "line_no": line_no,
-                    "field": "unit_price",
-                    "expected": float(agreed_price),
-                    "found": float(billed_price),
-                })
-
-            if match_type == "3-way":
-                received = conn.execute(
-                    """select coalesce(sum(rl.qty_received), 0)
-                       from goods_receipts gr
-                       join receipt_lines rl on rl.receipt_id = gr.id
-                       where gr.po_id = %s and rl.po_line_no = %s""",
-                    (po_id, po_line_no),
-                ).fetchone()[0]
-
-                if billed_qty != received:
-                    discrepancies.append({
-                        "line_no": line_no,
-                        "field": "quantity",
-                        "expected": float(received),
-                        "found": float(billed_qty),
-                    })
-
-        if subtotal != line_amount_sum:
-            discrepancies.append({
-                "line_no": None,
-                "field": "subtotal",
-                "expected": float(line_amount_sum),
-                "found": float(subtotal),
-            })
-
-        if tax_amount != round(subtotal * tax_rate, 2):
-            discrepancies.append({
-                "line_no": None,
-                "field": "tax_amount",
-                "expected": float(round(subtotal * tax_rate, 2)),
-                "found": float(tax_amount),
-            })
-
-        verdict = "mismatch" if discrepancies else "clean"
-        return {"invoice_id": invoice_id, "verdict": verdict, "discrepancies": discrepancies}
+        else:
+            print(f"unknown command: {command}")
+            sys.exit(1)
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        ids = [sys.argv[1]]
-    else:
-        ids = ["INV-1040", "INV-1051", "INV-1052", "INV-1053",
-               "INV-1054", "INV-1055", "INV-1056", "INV-1057"]
-
-    for inv in ids:
-        print(three_way_match(inv))
+    main()

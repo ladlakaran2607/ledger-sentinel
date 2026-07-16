@@ -42,7 +42,7 @@ def parse_decision(text: str) -> dict:
 def decide(case_file: dict) -> dict:
     response = client.messages.create(
         model=MODEL,
-        max_tokens=1000,
+        max_tokens=4000,
         system=INVESTIGATOR_SYSTEM,
         messages=[{"role": "user", "content": json.dumps(case_file, indent=2)}],
     )

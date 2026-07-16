@@ -1,4 +1,6 @@
+import json
 import os
+import re
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -43,6 +45,10 @@ class ResumeBody(BaseModel):
     decision: str
 
 
+class InterpretBody(BaseModel):
+    text: str
+
+
 def _config(thread_id: str) -> dict:
     return {"configurable": {"thread_id": thread_id}}
 
@@ -63,7 +69,39 @@ def meta() -> dict:
         "config_schema": {
             "invoice_id": {"type": "string", "required": True, "placeholder": "INV-1059"},
         },
+        "interpret": True,
     }
+
+
+@app.post("/interpret")
+def interpret(body: InterpretBody) -> dict:
+    m = re.search(r"INV-\d+", body.text, re.IGNORECASE)
+    if m:
+        return {"args": {"invoice_id": m.group(0).upper()}}
+    m = re.search(r"\binvoice\s*#?\s*(\d{3,5})\b", body.text, re.IGNORECASE)
+    if m:
+        return {"args": {"invoice_id": "INV-" + m.group(1)}}
+
+    from brain import MODEL, client
+
+    response = client.messages.create(
+        model=MODEL,
+        max_tokens=300,
+        system=(
+            "Extract the invoice id a task refers to. Respond ONLY with JSON: "
+            '{"invoice_id": "INV-1234"} or {"invoice_id": null} if no invoice is identifiable.'
+        ),
+        messages=[{"role": "user", "content": body.text}],
+    )
+    text = "".join(block.text for block in response.content if block.type == "text")
+    try:
+        data = json.loads(text[text.find("{") : text.rfind("}") + 1])
+        invoice_id = data.get("invoice_id")
+        if invoice_id:
+            return {"args": {"invoice_id": str(invoice_id).upper()}}
+    except (ValueError, AttributeError):
+        pass
+    return {"args": None}
 
 
 @app.post("/start", status_code=202)
